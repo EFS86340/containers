@@ -2,6 +2,7 @@
 #define LIST_LIBRARY_H
 
 #include <cstddef>
+#include <memory>
 
 /*
  * this is a stl list implementation review, sgi stl version implementation.
@@ -109,7 +110,7 @@ public:
 };
 
 
-template<typename T, typename Alloc = alloc>
+template<typename T, typename Alloc = std::alloc>
 class list {
 protected:
     typedef _list_node<T> list_node;
