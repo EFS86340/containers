@@ -124,6 +124,87 @@ struct __rb_tree_base_iterator {
     }
 };
 
+inline void
+__rb_tree_rotate_left(__rb_tree_node_base* x, __rb_tree_node_base* &root) {
+    __rb_tree_node_base* y = x->right;
+    x->right = y->left;
+    if (y->left != 0)
+        y->left->parent = x;
+    y->parent = x->parent;
+
+    if (x == root)
+        root = y;
+    else if (x == x->parent->parent)
+        x->parent->left = y;
+    else
+        x->parent->right = y;
+    y->left = x;
+    x->parent = y;
+}
+
+inline void
+__rb_tree_rotate_right(__rb_tree_node_base* x, __rb_tree_node_base* &root) {
+    __rb_tree_node_base* y = x->left;
+    x->left = y->right;
+    if (y->right != 0)
+        y->right->parent = x;
+    y->parent = x->parent;
+
+    if (x == root)
+        root = y;
+    else if (x == x->parent->right)
+        x->parent->right = y;
+    else
+        x->parent->left = y;
+    y->right = x;
+    x->parent = y;
+}
+
+
+inline void
+__rb_tree_rebalance(__rb_tree_node_base *x, __rb_tree_node_base* &root) {
+    x->color = __rb_tree_red;
+    while (x != root && x->parent->color == __rb_tree_red) {
+        if (x->parent == x->parent->parent->right) {
+            __rb_tree_node_base* y = x->parent->parent->right;
+            if (y && y->color == __rb_tree_red) {
+                x->parent->color = __rb_tree_black;
+                y->color = __rb_tree_black;
+                x->parent->parent->color = __rb_tree_red;
+                x = x->parent->parent;
+            }
+            else {
+                if (x == x->parent->right) {
+                    x = x->parent;
+                    __rb_tree_rotate_left(x, root);
+                }
+                x->parent->color = __rb_tree_black;
+                x->parent->parent->color = __rb_tree_red;
+                __rb_tree_rotate_right(x->parent->parent, root);
+            }
+        }
+        else {
+            __rb_tree_node_base* y = x->parent->parent->left;
+            if (y && y->color == __rb_tree_red) {
+                x->parent->color == __rb_tree_black;
+                y->color = __rb_tree_black;
+                x->parent->parent->color = __rb_tree_red;
+                x = x->parent->parent;
+            }
+            else {
+                if (x == x->parent->left) {
+                    x = x->parent;
+                    __rb_tree_rotate_right(x, root);
+                }
+                x->parent->color = __rb_tree_black;
+                x->parent->parent->color = __rb_tree_red;
+                __rb_tree_rotate_left(x->parent->parent, root);
+            }
+        }
+    }
+    root->color = __rb_tree_black;
+}
+
 
 template <class Value, class Ref, class Ptr>
 struct __rb_tree_iterator : public __rb_tree_base_iterator {
@@ -141,6 +222,8 @@ struct __rb_tree_iterator : public __rb_tree_base_iterator {
     __rb_tree_iterator(const iterator &it) {    node = it.node; }
 
     reference operator*() const { return link_type(node)->value_field;  }
+
+    bool operator==(const self &v) { return node == v.node; }
 
 #ifndef __SGI_STL_NO_ARROW_OPERATOR
     pointer operator->() const { return &(operator*()); }
@@ -279,8 +362,14 @@ private:
     }
 
 public:
-    rb_tree(const Compare &comp = Compare())
+    explicit rb_tree(const Compare &comp = Compare())
             : node_count(0), key_compare(comp) {    init(); }
+    /*
+     * Clion suggests using explicit to this constructor because of
+     *      its single-parameter constructor structure.
+     * So, here to talk about the explicit.
+     *      explicit does not allow implicit cast or copy initialization.
+     */
     ~rb_tree() {
         clear();    //TODO where is clear()
         put_node(header);
@@ -298,12 +387,95 @@ public:
     size_type max_size() const { return size_type(-1);  } //TODO what is size_type(-1)
 
 public:
-    std::pair<iterator, bool> insert_unique(const value_type &x);
-    iterator insert_equal(const value_type &x);
+    std::pair<iterator, bool> insert_unique(const value_type &v);
+    iterator insert_equal(const value_type &v);
 
 };
 
 
+template <class Key, class Value, class KeyOfValue, class Compare, class Alloc>
+typename rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::iterator
+rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::insert_equal(const value_type &v) {
+    link_type y = header;
+    link_type x = root();
+    while (x != 0) {
+        y = x;
+        x = key_compare(KeyOfValue()(v), key(x)) ? left(x) : right(x);
+    }
+    return __insert(x, y, v);
+}
+
+template <class Key, class Value, class KeyOfValue, class Compare, class Alloc>
+std::pair<typename rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::iterator, bool>
+rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::insert_unique(const value_type &v) {
+    link_type y = header;
+    link_type x = root();
+    bool comp = true;
+    while (x != 0) {
+        y = x;
+        comp = key_compare(KeyOfValue()(v), key(x));
+        x = comp ? left(x) : right(x);
+    }
+
+    iterator j = iterator(y);
+    if(comp)
+        if(j == begin())
+            return std::pair<iterator, bool >(__insert(x, y, v), true);
+        else
+            --j;
+    if (key_compare(key(j.node), KeyOfValue()(v)))
+        return std::pair<iterator, bool >(__insert(x, y, v), true);
+
+    return std::pair<iterator, bool >(j, false);
+}
+
+
+
+
+template <class Key, class Value, class KeyOfValue, class Compare, class Alloc>
+typename rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::iterator
+rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::
+__insert(base_ptr x_, base_ptr y_, const value_type &v) {
+    //link_type x = (link_type)x_;        //Clion warn: use auto when initializing with a cast to
+    //link_type y = (link_type)y_;        //      avoid duplicating type name
+    auto x = (link_type)x_;
+    auto y = (link_type)y_;
+    link_type z;
+
+    if (y == header || x != 0 || key_compare(KeyOfValue()(v), key(y))) {
+        z = create_node(v);
+        left(y) = z;
+        if(y == header) {
+            root() = z;
+            rightmost() = z;
+        }
+        else if (y == leftmost())
+            leftmost() = z;
+    }
+    else {
+        z = create_node(v);
+        right(y) = z;
+        if(y == rightmost())
+            rightmost() = z;
+    }
+
+    parent(z) = y;
+    left(z) = 0;
+    right(z) = 0;
+
+    __rb_tree_rebalance(z, header->parent);
+    ++node_count;
+    return iterator(z);
+}
+
+
+
+/*
+ *  functor, aka function objects.
+ *  and there is an implementation of operator() in it.
+ *  functor acts like a pair of function pointer and callback function.
+ *
+ */
 
 
 
