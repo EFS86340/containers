@@ -24,6 +24,17 @@
 
 #include "library.h"    // for iterator_tag
 #include <utility>
+#include <functional>
+
+/*
+ *  select1st implementation is under sgi, and defined only in GNU CPP,
+ *      there is an equivalent solution from stackoverflow.comG
+ */
+#define AUTO_RETURN(...) ->decltype(__VA_ARGS__) {  return (__VA_ARGS__);   }
+
+template <typename Pair>
+auto select1st() AUTO_RETURN(std::bind( &Pair::first, std::placeholders::_1 ))
+
 
 /*
  *  about red-black tree:
@@ -65,62 +76,6 @@ struct __rb_tree_node_base {
     static base_ptr maximum(base_ptr x) {
         while(x->right != 0) x = x->right;
         return x;
-    }
-};
-
-template <class Value>
-struct __rb_tree_node : public __rb_tree_node_base {
-    typedef __rb_tree_node<Value> *link_type;
-    Value value_field;
-};
-
-/*
- *  rb-tree iterators are bidirectional but not random
- *  accessible.
- */
-
-struct __rb_tree_base_iterator {
-    typedef __rb_tree_node_base::base_ptr base_ptr;
-    typedef bidirectional_iterator_tag iterator_category;
-    typedef ptrdiff_t difference_type;
-
-    base_ptr node;
-
-    void increment() {
-        if(node->right != 0) {
-            node = node->right;
-            while(node->left != 0)
-                node = node->left;
-        }
-        else {
-            base_ptr y = node->parent;
-            while (node == y->right) {
-                node = y;
-                y = y->parent;
-            }
-            if(node->right != y) // TODO why here is an if-sentence judge
-                node = y;
-        }
-    }
-
-    void decrement() {
-        if(node->color == __rb_tree_red &&
-                node->parent->parent == node)
-            node = node->right;
-        // case takes place in when node is header
-        else if (node->left != 0) {
-            base_ptr y = node->left;
-            while(y->right != 0)    y = y->right;
-            node = y;
-        }
-        else{
-            base_ptr y = node->parent;
-            while(node == y->left) {
-                node = y;
-                y = y->parent;
-            }
-            node = y;
-        }
     }
 };
 
@@ -204,6 +159,62 @@ __rb_tree_rebalance(__rb_tree_node_base *x, __rb_tree_node_base* &root) {
     }
     root->color = __rb_tree_black;
 }
+
+template <class Value>
+struct __rb_tree_node : public __rb_tree_node_base {
+    typedef __rb_tree_node<Value> *link_type;
+    Value value_field;
+};
+
+/*
+ *  rb-tree iterators are bidirectional but not random
+ *  accessible.
+ */
+
+struct __rb_tree_base_iterator {
+    typedef __rb_tree_node_base::base_ptr base_ptr;
+    typedef bidirectional_iterator_tag iterator_category;
+    typedef ptrdiff_t difference_type;
+
+    base_ptr node;
+
+    void increment() {
+        if(node->right != 0) {
+            node = node->right;
+            while(node->left != 0)
+                node = node->left;
+        }
+        else {
+            base_ptr y = node->parent;
+            while (node == y->right) {
+                node = y;
+                y = y->parent;
+            }
+            if(node->right != y) // TODO why here is an if-sentence judge
+                node = y;
+        }
+    }
+
+    void decrement() {
+        if(node->color == __rb_tree_red &&
+                node->parent->parent == node)
+            node = node->right;
+        // case takes place in when node is header
+        else if (node->left != 0) {
+            base_ptr y = node->left;
+            while(y->right != 0)    y = y->right;
+            node = y;
+        }
+        else{
+            base_ptr y = node->parent;
+            while(node == y->left) {
+                node = y;
+                y = y->parent;
+            }
+            node = y;
+        }
+    }
+};
 
 
 template <class Value, class Ref, class Ptr>
@@ -429,8 +440,18 @@ rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::insert_unique(const value_type 
     return std::pair<iterator, bool >(j, false);
 }
 
-
-
+/*!
+ *
+ * @tparam Key
+ * @tparam Value
+ * @tparam KeyOfValue
+ * @tparam Compare
+ * @tparam Alloc
+ * @param x_ the new value inserting node location
+ * @param y_ parent of x_
+ * @param v new value
+ * @return iterator pointing to new node
+ */
 
 template <class Key, class Value, class KeyOfValue, class Compare, class Alloc>
 typename rb_tree<Key, Value, KeyOfValue, Compare, Alloc>::iterator
@@ -467,6 +488,67 @@ __insert(base_ptr x_, base_ptr y_, const value_type &v) {
     ++node_count;
     return iterator(z);
 }
+
+
+template <class Key, class T, class Compare = less<Key>, class Alloc = alloc>
+class map {
+public:
+
+    typedef Key key_type;
+    typedef T data_type;
+    typedef T mapped_type;
+    typedef std::pair<const Key, T> value_type;
+    typedef Compare key_compare;
+
+    class value_compare
+            : public std::binary_function<value_type, value_type, bool > {
+        friend class map<Key, T, Compare, Alloc>;
+
+    protected:
+        Compare comp;
+        value_compare(Compare c) : comp(c) {    }
+
+    public:
+        bool operator()(const value_type &x, const value_type &y) const {
+            return comp(x.first, y.first);
+        }
+    };
+
+private:
+    typedef rb_tree<key_type ,value_type, select1st<value_type>, key_compare, Alloc> rep_type;
+    rep_type t;
+
+public:
+    typedef typename rep_type::pointer pointer;
+    typedef typename rep_type::const_pointer const_pointer;
+    typedef typename rep_type::reference reference;
+    typedef typename rep_type::const_reference const_reference;
+    typedef typename rep_type::iterator iterator;
+    typedef typename rep_type::const_iterator const_iterator;       //TODO rep_type::const_iterator definition
+    typedef typename rep_type::reverse_iterator reverse_iterator;   //TODO rep_type::reverse_iterator definition
+    typedef typename rep_type::const_reverse_iterator const_reverse_iterator;   //TODO same as above
+    typedef typename rep_type::size_type size_type;
+    typedef typename rep_type::difference_type difference_type;
+
+    map() : t(Compare() ) { }
+    explicit map(const Compare &comp) : t(comp) {   }
+
+    template <class InputIterator>
+            map(InputIterator first, InputIterator last)
+                    : t(Compare()) { t.insert_unique(first, last);  }
+
+    template <class InputIterator>
+            map(InputIterator first, InputIterator last, const Compare &comp)
+                    : t(comp) { t.insert_unique(first, last);   }
+
+    map(const map<Key, T, Compare, Alloc> &x) : t(x.t) {    }
+
+    map<Key, T, Compare, Alloc>& operator=(const map<Key, T, Compare, Alloc> &x) {
+        t = x.t;
+        return *this;
+    };
+    
+};
 
 
 
